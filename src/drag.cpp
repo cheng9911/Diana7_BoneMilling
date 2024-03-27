@@ -56,16 +56,85 @@ void errorControl(int e, const char *strIpAddress)
 KDL::Frame calplat(KDL::Vector normal, KDL::Vector p)
 {
     KDL::Vector gx{1, 0, 0};
+
+    KDL::Vector x, y;
     KDL::Vector z = normal;
     z.Normalize();
-    KDL::Vector y = z * gx;
-    y.Normalize();
-    KDL::Vector x = y * z;
-    x.Normalize();
+    y = z * gx;
+    double norm = y.Normalize();
+    if (norm < 0.1)
+    {
+        KDL::Vector gy{0, 1, 0};
+        x = gy * z;
+        x.Normalize();
+        y = z * x;
+        y.Normalize();
+
+    }
+    else
+    {
+        x = y * z;
+        x.Normalize();
+    }
 
     KDL::Rotation rot(x, y, z);
     KDL::Frame frame(rot, p);
     return frame; // 相对于基坐标系的位姿
+}
+
+KDL::Wrench getTheoryWrench(double *pose_tcp, double mass, KDL::Vector center_of_mass_position)
+{
+    //! The output of the function is the theory wrench
+    KDL::Vector translation(0.0, 0.0, mass * -9.81);
+    KDL::Vector axis = KDL::Vector(pose_tcp[3], pose_tcp[4], pose_tcp[5]);
+    double norm = axis.Normalize();
+    KDL::Frame TCP_base = KDL::Frame(KDL::Rotation::Rot(axis, norm), KDL::Vector(pose_tcp[0], pose_tcp[1], pose_tcp[2]));
+    KDL::Rotation f_TCP = KDL::Rotation::RPY(M_PI, 0, 0);
+    KDL::Frame f_base;
+    f_base.p = TCP_base.p;
+    f_base.M = TCP_base.M * f_TCP;
+    f_base.M.SetInverse();
+    KDL::Vector rotated_translation = f_base.M * translation;
+    KDL::Rotation cross_mass = KDL::Rotation(0, -center_of_mass_position[2], center_of_mass_position[1],
+                                             center_of_mass_position[2], 0, -center_of_mass_position[0],
+                                             -center_of_mass_position[1], center_of_mass_position[0], 0);
+    KDL::Wrench wrench_;
+    wrench_.force = rotated_translation;
+    wrench_.torque = cross_mass * wrench_.force;
+    std::cout << "Theory_wrench: " << wrench_.force.data[0] << "," << wrench_.force.data[1] << "," << wrench_.force.data[2] << "," << wrench_.torque.data[0] << "," << wrench_.torque.data[1] << "," << wrench_.torque.data[2] << std::endl;
+    return wrench_;
+}
+void getZeroOffset(double *pose_tcp, double *wrench, double mass, KDL::Vector center_of_mass_position, double *ZeroOffset)
+{
+
+    KDL::Wrench Theory_wrench = getTheoryWrench(pose_tcp, mass, center_of_mass_position);
+    ZeroOffset[0] = wrench[0] - Theory_wrench.force.data[0];
+    ZeroOffset[1] = wrench[1] - Theory_wrench.force.data[1];
+    ZeroOffset[2] = wrench[2] - Theory_wrench.force.data[2];
+    ZeroOffset[3] = wrench[3] - Theory_wrench.torque.data[0];
+    ZeroOffset[4] = wrench[4] - Theory_wrench.torque.data[1];
+    ZeroOffset[5] = wrench[5] - Theory_wrench.torque.data[2];
+}
+KDL::Wrench gravityCompensation(double *pose_tcp, double *wrench, double *Zero_offset, double mass, KDL::Vector center_of_mass_position)
+{
+
+    //! The feedback of function is the exit wrench
+    // Define the gravity vector
+    // KDL::Vector gravity(0.0, 0.0, -9.81);
+    // // Define the mass of the end-effector
+    // double mass = 0.249072;
+    KDL::Vector translation(0.0, 0.0, mass * -9.81);
+    // Define the mass center of the end-effector
+    // KDL::Vector center_of_mass_position(0.0, 0.0, 0.0366358);
+    KDL::Wrench Theory_wrench = getTheoryWrench(pose_tcp, mass, center_of_mass_position);
+    KDL::Wrench wrench_;
+    wrench_.force.data[0] = wrench[0] - Theory_wrench.force.data[0] - Zero_offset[0];
+    wrench_.force.data[1] = wrench[1] - Theory_wrench.force.data[1] - Zero_offset[1];
+    wrench_.force.data[2] = wrench[2] - Theory_wrench.force.data[2] - Zero_offset[2];
+    wrench_.torque.data[0] = wrench[3] - Theory_wrench.torque.data[0] - Zero_offset[3];
+    wrench_.torque.data[1] = wrench[4] - Theory_wrench.torque.data[1] - Zero_offset[4];
+    wrench_.torque.data[2] = wrench[5] - Theory_wrench.torque.data[2] - Zero_offset[5];
+    return wrench_;
 }
 void wait_move(const char *strIpAddress)
 {
@@ -158,6 +227,7 @@ int main(int argc, char const *argv[])
     wait_move(strIpAddress);
 
     double B = 10000.0;
+
 
     ret = getTcpPos(poses, strIpAddress);
 

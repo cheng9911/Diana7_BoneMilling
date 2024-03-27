@@ -11,10 +11,11 @@ using namespace SRI;
 bool isRunning = true;
 double wrench[6] = {0.0};
 const char *strIpAddress = "192.168.100.75";
-
+double enable_wrench[6] = {0};
 // double zero_offset[6] = {-3.0987, -1.25601, 11.7307, -0.000, 0.000, 0.000};
-double zero_offset[6] = {-3.0987, -1.25601, 14.1741, -0.000, 0.000, 0.000};
+// double zero_offset[6] = {-3.0987, -1.25601, 14.1741, -0.000, 0.000, 0.000};
 bool isFtSensor = false;
+bool noError = true;
 
 void rtDataHandler(std::vector<RTData<float>> &rtData)
 {
@@ -26,7 +27,7 @@ void rtDataHandler(std::vector<RTData<float>> &rtData)
         for (int j = 0; j < 6; j++)
         {
             // std::cout << "Ch " << j << ": " << rtData[i][j] << "\t";
-            wrench[j] = rtData[i][j] - zero_offset[j];
+            enable_wrench[j] = rtData[i][j];
         }
         // std::cout << std::endl;
     }
@@ -39,16 +40,31 @@ void errorControl(int e, const char *strIpAddress)
     strIpAddress = "192.168.100.75";
     const char *strError = formatError(e); // 该函数后面会介绍
     printf("error code (%d):%s\n", e, strError);
+
+    noError = false;
 }
 KDL::Frame calplat(KDL::Vector normal, KDL::Vector p)
 {
     KDL::Vector gx{1, 0, 0};
+
+    KDL::Vector x, y;
     KDL::Vector z = normal;
     z.Normalize();
-    KDL::Vector y = z * gx;
-    y.Normalize();
-    KDL::Vector x = y * z;
-    x.Normalize();
+    y = z * gx;
+    double norm = y.Normalize();
+    if (norm < 0.1)
+    {
+        KDL::Vector gy{0, 1, 0};
+        x = gy * z;
+        x.Normalize();
+        y = z * x;
+        y.Normalize();
+    }
+    else
+    {
+        x = y * z;
+        x.Normalize();
+    }
 
     KDL::Rotation rot(x, y, z);
     KDL::Frame frame(rot, p);
@@ -61,22 +77,25 @@ KDL::Wrench getTheoryWrench(double *pose_tcp, double mass, KDL::Vector center_of
     KDL::Vector translation(0.0, 0.0, mass * -9.81);
     KDL::Vector axis = KDL::Vector(pose_tcp[3], pose_tcp[4], pose_tcp[5]);
     double norm = axis.Normalize();
-    KDL::Frame TCP_pose = KDL::Frame(KDL::Rotation::Rot(axis, norm), KDL::Vector(pose_tcp[0], pose_tcp[1], pose_tcp[2]));
-    KDL::Rotation f_TCP=KDL::Rotation::RPY(M_1_PI,0,0);
-    TCP_pose.M=f_TCP.M*
-    TCP_pose.M.SetInverse();
-    KDL::Vector rotated_translation = TCP_pose.M * translation;
+    KDL::Frame TCP_base = KDL::Frame(KDL::Rotation::Rot(axis, norm), KDL::Vector(pose_tcp[0], pose_tcp[1], pose_tcp[2]));
+    KDL::Rotation f_TCP = KDL::Rotation::RPY(M_PI, 0, 0);
+    KDL::Frame f_base;
+    f_base.p = TCP_base.p;
+    f_base.M = TCP_base.M * f_TCP;
+    f_base.M.SetInverse();
+    KDL::Vector rotated_translation = f_base.M * translation;
     KDL::Rotation cross_mass = KDL::Rotation(0, -center_of_mass_position[2], center_of_mass_position[1],
                                              center_of_mass_position[2], 0, -center_of_mass_position[0],
                                              -center_of_mass_position[1], center_of_mass_position[0], 0);
     KDL::Wrench wrench_;
     wrench_.force = rotated_translation;
     wrench_.torque = cross_mass * wrench_.force;
+    // std::cout << "Theory_wrench: " << wrench_.force.data[0] << "," << wrench_.force.data[1] << "," << wrench_.force.data[2] << "," << wrench_.torque.data[0] << "," << wrench_.torque.data[1] << "," << wrench_.torque.data[2] << std::endl;
     return wrench_;
 }
-double *getZeroOffset(double *pose_tcp, double *wrench, double mass, KDL::Vector center_of_mass_position)
+void getZeroOffset(double *pose_tcp, double *wrench, double mass, KDL::Vector center_of_mass_position, double *ZeroOffset)
 {
-    double ZeroOffset[6] = {0.0};
+
     KDL::Wrench Theory_wrench = getTheoryWrench(pose_tcp, mass, center_of_mass_position);
     ZeroOffset[0] = wrench[0] - Theory_wrench.force.data[0];
     ZeroOffset[1] = wrench[1] - Theory_wrench.force.data[1];
@@ -84,7 +103,6 @@ double *getZeroOffset(double *pose_tcp, double *wrench, double mass, KDL::Vector
     ZeroOffset[3] = wrench[3] - Theory_wrench.torque.data[0];
     ZeroOffset[4] = wrench[4] - Theory_wrench.torque.data[1];
     ZeroOffset[5] = wrench[5] - Theory_wrench.torque.data[2];
-    return ZeroOffset;
 }
 KDL::Wrench gravityCompensation(double *pose_tcp, double *wrench, double *Zero_offset, double mass, KDL::Vector center_of_mass_position)
 {
@@ -132,7 +150,7 @@ int main(int argc, char const *argv[])
     double x, y, z, mx, my, mz;
     auto rtDataValid = sensor.getRealTimeDataValid();
     auto rtMode = sensor.getRealTimeDataMode();
-    sensor.startRealTimeDataRepeatedly<float>(&rtDataHandler, rtMode, rtDataValid);
+    // sensor.startRealTimeDataRepeatedly<float>(&rtDataHandler, rtMode, rtDataValid);
     srv_net_st *pinfo = new srv_net_st();
     memset(pinfo->SrvIp, 0x00, sizeof(pinfo->SrvIp));
     memcpy(pinfo->SrvIp, "192.168.100.75", strlen("192.168.100.75"));
@@ -154,12 +172,12 @@ int main(int argc, char const *argv[])
 
     const double PI = 3.141592653;
     double joints[7] = {0, 0, 0, PI / 2, 0, -PI / 2, 0}; // 以 7 轴机器人为例
-    moveJToTarget(joints, 0.5, 0.5, 0, 0, 0, strIpAddress);
-    wait_move(strIpAddress);
+
     // double joints[JOINT_NUM] = {0.0};
     double poses[6] = {0.0};
     // 初始点位
-
+    moveJToTarget(joints, 0.5, 0.5, 0, 0, 0, strIpAddress);
+    wait_move(strIpAddress);
     ret = getTcpPos(poses, strIpAddress);
     if (ret < 0)
     {
@@ -169,8 +187,40 @@ int main(int argc, char const *argv[])
     {
         std::cout << "joints: " << joints[0] << " " << joints[1] << " " << joints[2] << " " << joints[3] << " " << joints[4] << " " << joints[5] << " " << joints[6] << std::endl;
     }
+
+    // 上电采集力信息数据
+
+    int sum = 1000;
+    for (int i = 0; i < sum; i++)
+    {
+        auto rtData = sensor.getRealTimeDataOnce<float>(rtMode, rtDataValid);
+
+        for (int i = 0; i < rtData.size(); i++)
+        {
+            enable_wrench[0] += rtData[i][0];
+            enable_wrench[1] += rtData[i][1];
+            enable_wrench[2] += rtData[i][2];
+            enable_wrench[3] += rtData[i][3];
+            enable_wrench[4] += rtData[i][4];
+            enable_wrench[5] += rtData[i][5];
+        }
+    }
+    enable_wrench[0] /= sum;
+    enable_wrench[1] /= sum;
+    enable_wrench[2] /= sum;
+    enable_wrench[3] /= sum;
+    enable_wrench[4] /= sum;
+    enable_wrench[5] /= sum;
+    std::cout << "enable_wrench: " << enable_wrench[0] << "," << enable_wrench[1] << "," << enable_wrench[2] << "," << enable_wrench[3] << "," << enable_wrench[4] << "," << enable_wrench[5] << std::endl;
+    double mass = 0.249072 - 0.09;
+    KDL::Vector center_of_mass_position(0.0, 0.0, 0.0366358);
+    double Zero_offset[6] = {0.0};
+    getZeroOffset(poses, enable_wrench, mass, center_of_mass_position, Zero_offset);
+    std::cout << "Zero_offset: " << Zero_offset[0] << "," << Zero_offset[1] << "," << Zero_offset[2] << "," << Zero_offset[3] << "," << Zero_offset[4] << "," << Zero_offset[5] << std::endl;
+
+    // 向量平面确定
     KDL::Vector p(poses[0], poses[1], poses[2]);
-    KDL::Vector normal(0, 0, 1);
+    KDL::Vector normal(0, 1, 1);
     KDL::Frame frame = calplat(normal, p);
     KDL::Vector r = frame.M.GetRot();
     // KDL::Wrench wrench;
@@ -183,10 +233,101 @@ int main(int argc, char const *argv[])
     double zv_shaper_damping_ratio = 0;
     ret = moveLToPose(pose_target, vel, acc, nullptr, zv_shaper_order, zv_shaper_frequency, zv_shaper_damping_ratio, strIpAddress);
     wait_move(strIpAddress);
+    memset(enable_wrench, 0, sizeof(enable_wrench));
+    for (int i = 0; i < sum; i++)
+    {
+        auto rtData = sensor.getRealTimeDataOnce<float>(rtMode, rtDataValid);
 
+        for (int i = 0; i < rtData.size(); i++)
+        {
+            enable_wrench[0] += rtData[i][0];
+            enable_wrench[1] += rtData[i][1];
+            enable_wrench[2] += rtData[i][2];
+            enable_wrench[3] += rtData[i][3];
+            enable_wrench[4] += rtData[i][4];
+            enable_wrench[5] += rtData[i][5];
+        }
+    }
+    enable_wrench[0] /= sum;
+    enable_wrench[1] /= sum;
+    enable_wrench[2] /= sum;
+    enable_wrench[3] /= sum;
+    enable_wrench[4] /= sum;
+    enable_wrench[5] /= sum;
+    getTcpPos(poses, strIpAddress);
+    KDL::Wrench wrench_compensation = gravityCompensation(poses, enable_wrench, Zero_offset, mass, center_of_mass_position);
+    std::cout << "wrench_compensation: " << wrench_compensation.force.data[0] << "," << wrench_compensation.force.data[1] << "," << wrench_compensation.force.data[2] << "," << wrench_compensation.torque.data[0] << "," << wrench_compensation.torque.data[1] << "," << wrench_compensation.torque.data[2] << std::endl;
     double B = 10000.0;
+    KDL::Rotation f_tcp = KDL::Rotation::RPY(PI, 0, 0);
+    // getTcpPos(poses, strIpAddress);
+    KDL::Vector axis = KDL::Vector(poses[3], poses[4], poses[5]);
+    double norm = axis.Normalize();
+    double rot_poses[6]={0.0};
+    KDL::Frame TCP_base = KDL::Frame(KDL::Rotation::Rot(axis, norm), KDL::Vector(poses[0], poses[1], poses[2]));
+    sensor.startRealTimeDataRepeatedly<float>(&rtDataHandler, rtMode, rtDataValid);
+    while (isRunning)
+    {
+        if(getRobotState(strIpAddress) == 6) {
+            noError = false;
+        }
 
-    ret = getTcpPos(poses, strIpAddress);
+
+        if (noError)
+        {
+            // wrench_compensation.force.y(1);
+            wrench_compensation = gravityCompensation(poses, enable_wrench, Zero_offset, mass, center_of_mass_position);
+            // wrench_compensation.force.x(0);
+            // wrench_compensation.force.y(0);
+            wrench_compensation.force.z(0);
+            wrench_compensation.torque.x(0);
+            wrench_compensation.torque.y(0);
+            wrench_compensation.torque.z(0);
+            KDL::Wrench wrench_base = TCP_base.M * f_tcp * wrench_compensation;
+
+            poses[0] += wrench_base.force.x() / B;
+            poses[1] += wrench_base.force.y() / B;
+            poses[2] += wrench_base.force.z() / B;
+            
+            // getTcpPos(rot_poses, strIpAddress);
+            axis=KDL::Vector(poses[3],poses[4],poses[5]);
+            auto n = normal;
+            n.Normalize();
+            double norm = axis.Normalize();
+            double angle= -wrench_compensation.torque.z()/1000.0;
+            auto delta_R = KDL::Rotation::Rot(n, angle);
+            auto m = delta_R * KDL::Rotation::Rot(axis,norm);
+            TCP_base=KDL::Frame(m, KDL::Vector(poses[0],poses[1],poses[2]));
+            KDL::Vector r = TCP_base.M.GetRot();
+            poses[3]=r.x();
+            poses[4]=r.y();
+            poses[5]=r.z();
+            // std::cout << "poses: " << poses[0] << "," << poses[1] << "," << poses[2] << std::endl;
+            // std::cout<<"Wrench_base: "<<wrench_base.force.x()<<","<<wrench_base.force.y()<<","<<wrench_base.force.z()<<","<<wrench_base.torque.x()<<","<<wrench_base.torque.y()<<","<<wrench_base.torque.z()<<std::endl;
+
+            servoL(poses, 0.01, 0.1, 300, 1.0, nullptr, strIpAddress);
+
+            // std::cout<<"poses: "<<poses[0]<<","<<poses[1]<<","<<poses[2]<<","<<poses[3]<<","<<poses[4]<<","<<poses[5]<<std::endl;
+            // std::cout << "wrench z: " << std::fixed << wrench_compensation.torque.z() << " ; Angle: " << angle << std::endl;
+            usleep(1000);
+        }
+        else
+        {
+            // while(getRobotState(strIpAddress) == 6)
+            //     cleanErrorInfo(strIpAddress);
+            // std::cout << "ClearErrorInfo!!" << std::endl;
+            noError = true;
+
+            getTcpPos(poses, strIpAddress);
+
+            // usleep(10000);
+
+            cleanErrorInfo(strIpAddress);
+            setLastError(0, strIpAddress);
+            std::cout << "Clear Error!!" << std::endl;
+
+            usleep(1000);
+        }
+    }
 
     destroySrv(strIpAddress);
     return 0;
