@@ -142,8 +142,28 @@ void wait_move(const char *strIpAddress)
     }
     stop(strIpAddress);
 }
+void signalHandler(int signo)
+{
+    if (signo == SIGINT)
+    {
+        std::cout << "\033[1;31m"
+                  << "[!!SIGNAL!!]"
+                  << "INTERRUPT by CTRL-C"
+                  << "\033[0m" << std::endl;
+
+        isRunning = false;
+        exit(0);
+    }
+}
 int main(int argc, char const *argv[])
 {
+    // 信号处理
+    if (signal(SIGINT, signalHandler) == SIG_ERR)
+    {
+        std::cout << "\033[1;31m"
+                  << "Can not catch SIGINT"
+                  << "\033[0m" << std::endl;
+    }
     // 传感器初始化
     SRI::CommEthernet *ce = new SRI::CommEthernet("192.168.2.109", 4008);
     SRI::FTSensor sensor(ce);
@@ -262,15 +282,15 @@ int main(int argc, char const *argv[])
     // getTcpPos(poses, strIpAddress);
     KDL::Vector axis = KDL::Vector(poses[3], poses[4], poses[5]);
     double norm = axis.Normalize();
-    double rot_poses[6]={0.0};
+    double rot_poses[6] = {0.0};
     KDL::Frame TCP_base = KDL::Frame(KDL::Rotation::Rot(axis, norm), KDL::Vector(poses[0], poses[1], poses[2]));
     sensor.startRealTimeDataRepeatedly<float>(&rtDataHandler, rtMode, rtDataValid);
     while (isRunning)
     {
-        if(getRobotState(strIpAddress) == 6) {
+        if (getRobotState(strIpAddress) == 6)
+        {
             noError = false;
         }
-
 
         if (noError)
         {
@@ -287,20 +307,20 @@ int main(int argc, char const *argv[])
             poses[0] += wrench_base.force.x() / B;
             poses[1] += wrench_base.force.y() / B;
             poses[2] += wrench_base.force.z() / B;
-            
+
             // getTcpPos(rot_poses, strIpAddress);
-            axis=KDL::Vector(poses[3],poses[4],poses[5]);
+            axis = KDL::Vector(poses[3], poses[4], poses[5]);
             auto n = normal;
             n.Normalize();
             double norm = axis.Normalize();
-            double angle= -wrench_compensation.torque.z()/1000.0;
+            double angle = -wrench_compensation.torque.z() / 1000.0;
             auto delta_R = KDL::Rotation::Rot(n, angle);
-            auto m = delta_R * KDL::Rotation::Rot(axis,norm);
-            TCP_base=KDL::Frame(m, KDL::Vector(poses[0],poses[1],poses[2]));
+            auto m = delta_R * KDL::Rotation::Rot(axis, norm);
+            TCP_base = KDL::Frame(m, KDL::Vector(poses[0], poses[1], poses[2]));
             KDL::Vector r = TCP_base.M.GetRot();
-            poses[3]=r.x();
-            poses[4]=r.y();
-            poses[5]=r.z();
+            poses[3] = r.x();
+            poses[4] = r.y();
+            poses[5] = r.z();
             // std::cout << "poses: " << poses[0] << "," << poses[1] << "," << poses[2] << std::endl;
             // std::cout<<"Wrench_base: "<<wrench_base.force.x()<<","<<wrench_base.force.y()<<","<<wrench_base.force.z()<<","<<wrench_base.torque.x()<<","<<wrench_base.torque.y()<<","<<wrench_base.torque.z()<<std::endl;
 
