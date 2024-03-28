@@ -215,14 +215,14 @@ int main(int argc, char const *argv[])
     {
         auto rtData = sensor.getRealTimeDataOnce<float>(rtMode, rtDataValid);
 
-        for (int i = 0; i < rtData.size(); i++)
+        for (int j = 0; j < rtData.size(); j++)
         {
-            enable_wrench[0] += rtData[i][0];
-            enable_wrench[1] += rtData[i][1];
-            enable_wrench[2] += rtData[i][2];
-            enable_wrench[3] += rtData[i][3];
-            enable_wrench[4] += rtData[i][4];
-            enable_wrench[5] += rtData[i][5];
+            enable_wrench[0] += rtData[j][0];
+            enable_wrench[1] += rtData[j][1];
+            enable_wrench[2] += rtData[j][2];
+            enable_wrench[3] += rtData[j][3];
+            enable_wrench[4] += rtData[j][4];
+            enable_wrench[5] += rtData[j][5];
         }
     }
     enable_wrench[0] /= sum;
@@ -258,14 +258,14 @@ int main(int argc, char const *argv[])
     {
         auto rtData = sensor.getRealTimeDataOnce<float>(rtMode, rtDataValid);
 
-        for (int i = 0; i < rtData.size(); i++)
+        for (int j = 0; j < rtData.size(); j++)
         {
-            enable_wrench[0] += rtData[i][0];
-            enable_wrench[1] += rtData[i][1];
-            enable_wrench[2] += rtData[i][2];
-            enable_wrench[3] += rtData[i][3];
-            enable_wrench[4] += rtData[i][4];
-            enable_wrench[5] += rtData[i][5];
+            enable_wrench[0] += rtData[j][0];
+            enable_wrench[1] += rtData[j][1];
+            enable_wrench[2] += rtData[j][2];
+            enable_wrench[3] += rtData[j][3];
+            enable_wrench[4] += rtData[j][4];
+            enable_wrench[5] += rtData[j][5];
         }
     }
     enable_wrench[0] /= sum;

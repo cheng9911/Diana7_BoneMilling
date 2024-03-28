@@ -6,6 +6,8 @@
 #include <sri/ftsensor.hpp>
 #include <sri/commethernet.hpp>
 #include <kdl/frames.hpp>
+using namespace SRI;
+
 class platmotion
 {
 private:
@@ -13,14 +15,15 @@ private:
 public:
     platmotion(/* args */);
     ~platmotion();
-    KDL::Wrench Sensor_wrench;
+    static KDL::Wrench Sensor_wrench;
     double gravity = 9.81;
     // 力传感器
-    SRI::CommEthernet *ce=nullptr;
-    SRI::FTSensor *sensor=nullptr;
-    bool isFtSensor = false;
+    SRI::CommEthernet *ce = nullptr;
+    SRI::FTSensor *sensor = nullptr;
+    static bool isFtSensor;
     double ZeroOffset[6] = {0.0};
-    double mass;
+    int sum = 1000;
+    double mass = 0.159072;
     KDL::Vector center_of_mass_position;
     const char *SensorIpAddress = "192.168.2.109";
     uint16_t SensorPort = 4008;
@@ -120,11 +123,9 @@ public:
         }
         stop(strIpAddress);
     }
-    void rtDataHandler(std::vector<RTData<float>> &rtData)
+    static void rtDataHandler(std::vector<SRI::RTData<float>> &rtData)
     {
         isFtSensor = true;
-        // static int i = 0;
-        // std::cout << "[" << i << "] RT Data is ->  ";
         for (int i = 0; i < rtData.size(); i++)
         {
             Sensor_wrench.force.data[0] = rtData[i][0];
@@ -135,44 +136,99 @@ public:
             Sensor_wrench.torque.data[2] = rtData[i][5];
         }
     }
-    void logRobotState(StrRobotStateInfo *pinfo, const char *strIpAddress)
+    static void logRobotState(StrRobotStateInfo *pinfo, const char *strIpAddress)
     {
     }
-    void errorControl(int e, const char *strIpAddress)
+    static void errorControl(int e, const char *strIpAddress)
     {
         const char *strError = formatError(e); // 该函数后面会介绍
         printf("error code (%d):%s\n", e, strError);
+    }
+    // 上电采集力信息数据
+    void MoveToCalZero(double mass, KDL::Vector center_of_mass_position, double *ZeroOffset)
+    {
+        double poses_zero[6] = {0.0};
+        double joints_zero[7] = {0.0, 0.0, 0.0, M_PI / 2, 0.0, M_PI / 2, 0};
+        moveJToTarget(joints_zero, 0.5, 0.5, 0, 0, 0, strIpAddress);
+        wait_move(strIpAddress);
+        int ret = getTcpPos(poses_zero, strIpAddress);
+        if (ret < 0)
+        {
+            printf("getJointPos failed! Return value = %d\n", ret);
+        }
+        else
+        {
+            printf("getJointPos success! Return value = %d\n", ret);
+        }
+        auto rtDataValid = sensor->getRealTimeDataValid();
+        auto rtMode = sensor->getRealTimeDataMode();
+        for (int i = 0; i < sum; i++)
+        {
+            auto rtData = sensor->getRealTimeDataOnce<float>(rtMode, rtDataValid);
+            for (int j = 0; j < rtData.size(); j++)
+            {
+                Sensor_wrench.force.data[0] += rtData[j][0];
+                Sensor_wrench.force.data[1] += rtData[j][1];
+                Sensor_wrench.force.data[2] += rtData[j][2];
+                Sensor_wrench.torque.data[0] += rtData[j][3];
+                Sensor_wrench.torque.data[1] += rtData[j][4];
+                Sensor_wrench.torque.data[2] += rtData[j][5];
+            }
+            double wrench[6] = {Sensor_wrench.force.data[0] / sum, Sensor_wrench.force.data[1] / sum, Sensor_wrench.force.data[2] / sum, Sensor_wrench.torque.data[0] / sum, Sensor_wrench.torque.data[1] / sum, Sensor_wrench.torque.data[2] / sum};
+            getZeroOffset(poses_zero, wrench, mass, center_of_mass_position, ZeroOffset);
+            std::cout << "ZeroOffset: " << ZeroOffset[0] << "," << ZeroOffset[1] << "," << ZeroOffset[2] << "," << ZeroOffset[3] << "," << ZeroOffset[4] << "," << ZeroOffset[5] << std::endl;
+
+        }
     }
 };
 
 platmotion::platmotion(/* args */)
 {
     // 传感器初始化
-   
+
     ce = new SRI::CommEthernet(SensorIpAddress, SensorPort);
     sensor = new SRI::FTSensor(ce);
     auto rtDataValid = sensor->getRealTimeDataValid();
     auto rtMode = sensor->getRealTimeDataMode();
-    sensor->startRealTimeDataRepeatedly<float>(&platmotion::rtDataHandler, rtMode, rtDataValid);
     // 机械臂初始化
-    pinfo = new srv_net_st;
+    pinfo = new srv_net_st();
     memset(pinfo->SrvIp, 0x00, sizeof(pinfo->SrvIp));
     memcpy(pinfo->SrvIp, strIpAddress, strlen(strIpAddress));
     pinfo->LocHeartbeatPort = 0;
     pinfo->LocRobotStatePort = 0;
     pinfo->LocSrvPort = 0;
-    int ret = initSrv(this->errorControl, this->logRobotState, pinfo);
+    int ret = initSrv(errorControl, logRobotState, pinfo);
     if (ret < 0)
     {
-        printf("%s initSrv failed! Return value = %d\n", strIpAddress, ret);
+        printf("192.168.100.75 initSrv failed! Return value = %d\n", ret);
     }
-    //零漂
-    double pose_tcp[6] = {0.0};
-    
-    
+    if (pinfo)
+    {
+        delete pinfo;
+        pinfo = nullptr;
+    }
+    // 机械臂上使能
+    int ret1 = releaseBrake(strIpAddress);
+    if (ret1 < 0)
+    {
+        printf("releaseBrake failed! Return value = %d\n", ret1);
+        destroySrv(strIpAddress);
+        exit(0);
+    }
+    mass=0.159072;
+    center_of_mass_position = KDL::Vector(0.0, 0.0, 0.0366358);
+    // 零漂
+    MoveToCalZero(mass, center_of_mass_position, ZeroOffset);
+    // 力传感器清零
+    Sensor_wrench.Zero();
+    std::cout<<"Sensor_wrench: "<<Sensor_wrench.force.data[0]<<","<<Sensor_wrench.force.data[1]<<","<<Sensor_wrench.force.data[2]<<","<<Sensor_wrench.torque.data[0]<<","<<Sensor_wrench.torque.data[1]<<","<<Sensor_wrench.torque.data[2]<<std::endl;
+    // 力传感器线程开启
+
 
 }
 
 platmotion::~platmotion()
 {
 }
+bool platmotion::isFtSensor = false;
+KDL::Wrench platmotion::Sensor_wrench = KDL::Wrench(KDL::Vector(0, 0, 0), KDL::Vector(0, 0, 0));

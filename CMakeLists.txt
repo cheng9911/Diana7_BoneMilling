@@ -22,9 +22,13 @@ test_servoL
 set(LIST ${List_Cpp} )
 foreach(list ${LIST})
 
-  add_executable(${list} src/${list}.cpp src/platmotion.hpp )
+  add_executable(${list} src/${list}.cpp  )
   target_include_directories(${list} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(${list} PUBLIC  DianaApi BasicSdk GenericAlgorithm ToolSdk xml2 Boost::system Boost::thread Threads::Threads orocos-kdl)
 
 endforeach()
 
+
+add_executable(motion src/motion.cpp src/platmotion.hpp )
+target_include_directories(motion PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(motion PUBLIC  DianaApi BasicSdk GenericAlgorithm ToolSdk xml2 Boost::system Boost::thread Threads::Threads orocos-kdl)
